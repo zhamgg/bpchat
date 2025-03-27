@@ -443,7 +443,7 @@ def main():
                 max_sheets = st.number_input("Max Sheets to Process", 1, 20, 5,
                                            help="Maximum number of sheets to process")
                 
-                max_rows = st.number_input("Max Rows per Sheet", 500, 10000, 1000,
+                max_rows = st.number_input("Max Rows per Sheet", 500, 10000, 200000,
                                          help="Maximum rows to process per sheet")
                 
                 process_button = st.button("Process File", use_container_width=True)
