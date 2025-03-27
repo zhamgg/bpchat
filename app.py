@@ -22,7 +22,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Constants
-APP_TITLE = "Chat with Boardingpass"
+APP_TITLE = "BoardingPass Chatbot"
 MAX_FILE_SIZE_MB = 200
 CACHE_DIR = ".streamlit/cache"
 
@@ -91,7 +91,7 @@ def load_from_cache(cache_path: str) -> Any:
         logger.error(f"Error loading from cache: {str(e)}")
     return None
 
-def extract_sheet_data(file_path: str, max_sheets: int = 1, max_rows_per_sheet: int = 200000) -> Dict[str, pd.DataFrame]:
+def extract_sheet_data(file_path: str, max_sheets: int = 2, max_rows_per_sheet: int = 200000) -> Dict[str, pd.DataFrame]:
     """
     Extract data from Excel sheets in a memory-efficient way.
     
@@ -299,7 +299,7 @@ def create_conversation_chain(vectorstore: Any, model_name: str) -> Any:
 def display_welcome_screen():
     """Display the welcome screen."""
     st.markdown("""
-    # Welcome to the Boardingpass Chatbot
+    # Welcome to the BoardingPass Chatbot
     
     This tool allows you to chat with your PA Report data through natural language.
     
@@ -334,7 +334,7 @@ def display_chat_interface():
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
     
-    # Chat input
+    # Chat input - this is the text box for submitting questions
     if prompt := st.chat_input("Ask a question about your PA Report"):
         # Add user message to chat history
         st.session_state.messages.append({"role": "user", "content": prompt})
@@ -394,7 +394,7 @@ def main():
         st.session_state.file_processed = False
     
     # Main title
-    st.title("Boardingpass Chatbot")
+    st.title("Great Gray Analytics PA Report Chatbot")
     
     # Sidebar configuration
     with st.sidebar:
@@ -466,6 +466,7 @@ def main():
 
 def process_file(uploaded_file, model_name, chunk_size, chunk_overlap, max_sheets, max_rows):
     """Process the uploaded file."""
+    # Reset file processed flag at the beginning
     st.session_state.file_processed = False
     
     with st.status("Processing PA Report file...", expanded=True) as status:
@@ -512,10 +513,15 @@ def process_file(uploaded_file, model_name, chunk_size, chunk_overlap, max_sheet
             
             # Save to session state
             st.session_state.conversation_chain = conversation_chain
+            
+            # Set flag to indicate file is processed - IMPORTANT for showing chat interface
             st.session_state.file_processed = True
             
             # Complete processing
             status.update(label="Processing complete! You can now chat with your PA Report.", state="complete")
+            
+            # Force a rerun to refresh the UI and show the chat interface
+            st.experimental_rerun()
             
         except Exception as e:
             status.update(label=f"Error processing file: {str(e)}", state="error")
