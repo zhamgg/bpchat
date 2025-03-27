@@ -315,7 +315,9 @@ def create_conversation_chain(vectorstore: Any, model_name: str) -> Any:
         
         return conversation_chain
         
-    
+        except Exception as e:
+        st.error(f"Error creating conversation chain: {str(e)}")
+
 
 def create_simple_conversation_chain(model_name: str) -> Any:
     """
