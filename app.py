@@ -191,9 +191,8 @@ def display_chat_interface():
     
     # Display chat messages
     for message in st.session_state.messages:
-        if message["role"] != "system":  # Don't show system messages to the user
-            with st.chat_message(message["role"]):
-                st.markdown(message["content"])
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
     
     # Chat input
     if prompt := st.chat_input("Ask a question about your PA Report"):
@@ -209,18 +208,18 @@ def display_chat_interface():
             message_placeholder = st.empty()
             
             try:
-                # Prepare messages for API call
-                messages = [{"role": "system", "content": st.session_state.system_message}]
+                # Prepare messages for API call - system message is separate parameter
+                messages = []
                 
-                # Add conversation history (excluding system message)
+                # Add conversation history (system message is handled separately)
                 for msg in st.session_state.messages:
-                    if msg["role"] != "system":
-                        messages.append({"role": msg["role"], "content": msg["content"]})
+                    messages.append({"role": msg["role"], "content": msg["content"]})
                 
                 # Make API call to Claude
                 with st.spinner("Thinking..."):
                     response = st.session_state.client.messages.create(
                         model=st.session_state.model,
+                        system=st.session_state.system_message,  # System message as separate parameter
                         messages=messages,
                         max_tokens=1000
                     )
