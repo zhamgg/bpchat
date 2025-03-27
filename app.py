@@ -2,20 +2,10 @@ import streamlit as st
 import pandas as pd
 import os
 import tempfile
-import time
-import logging
-from typing import Dict, List, Any
-from langchain.chat_models.anthropic import ChatAnthropic
-from langchain.memory import ConversationBufferMemory
-from langchain.chains import ConversationChain
-from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder
-
-# Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+import anthropic
 
 # Constants
-APP_TITLE = "Great Gray Analytics PA Report Chatbot (Simple Version)"
+APP_TITLE = "Great Gray Analytics PA Report Chatbot"
 MAX_FILE_SIZE_MB = 200
 MAX_SHEETS = 5
 MAX_ROWS_PER_SHEET = 1000
@@ -30,18 +20,8 @@ try:
 except Exception as e:
     pass  # Will handle via UI input
 
-def extract_sheet_data(file_path: str, max_sheets: int = 5, max_rows_per_sheet: int = 1000) -> Dict[str, pd.DataFrame]:
-    """
-    Extract data from Excel sheets in a memory-efficient way.
-    
-    Args:
-        file_path: Path to Excel file
-        max_sheets: Maximum number of sheets to process
-        max_rows_per_sheet: Maximum rows to process per sheet
-        
-    Returns:
-        Dictionary mapping sheet names to DataFrames
-    """
+def extract_sheet_data(file_path, max_sheets=5, max_rows_per_sheet=1000):
+    """Extract data from Excel sheets."""
     sheet_data = {}
     
     try:
@@ -51,48 +31,23 @@ def extract_sheet_data(file_path: str, max_sheets: int = 5, max_rows_per_sheet: 
         
         for sheet_name in sheet_names:
             try:
-                # Try to get row count (this may fail for very large sheets)
-                try:
-                    sheet = xls.book.sheet_by_name(sheet_name)
-                    row_count = getattr(sheet, 'nrows', 0)
-                except:
-                    # If we can't get exact count, read a single row to check if sheet has data
-                    sample = pd.read_excel(file_path, sheet_name=sheet_name, nrows=1)
-                    row_count = 1 if not sample.empty else 0
-                
-                if row_count > 0:
-                    # If sheet is large, sample it
-                    if row_count > max_rows_per_sheet:
-                        # Read first rows
-                        sheet_data[sheet_name] = pd.read_excel(
-                            file_path, 
-                            sheet_name=sheet_name, 
-                            nrows=max_rows_per_sheet
-                        )
-                    else:
-                        # Read entire sheet
-                        sheet_data[sheet_name] = pd.read_excel(file_path, sheet_name=sheet_name)
-            
+                # Read with limit on rows
+                sheet_data[sheet_name] = pd.read_excel(
+                    file_path, 
+                    sheet_name=sheet_name, 
+                    nrows=max_rows_per_sheet
+                )
             except Exception as e:
-                logger.warning(f"Error reading sheet {sheet_name}: {str(e)}")
-                continue
+                st.warning(f"Error reading sheet {sheet_name}: {str(e)}")
         
         return sheet_data
         
     except Exception as e:
-        logger.error(f"Error extracting sheet data: {str(e)}")
+        st.error(f"Error extracting sheet data: {str(e)}")
         return {}
 
-def generate_sheet_summaries(sheet_data: Dict[str, pd.DataFrame]) -> List[str]:
-    """
-    Generate text summaries of each sheet.
-    
-    Args:
-        sheet_data: Dictionary mapping sheet names to DataFrames
-    
-    Returns:
-        List of text summaries
-    """
+def generate_sheet_summaries(sheet_data):
+    """Generate text summaries of each sheet."""
     summaries = []
     
     for sheet_name, df in sheet_data.items():
@@ -122,91 +77,9 @@ def generate_sheet_summaries(sheet_data: Dict[str, pd.DataFrame]) -> List[str]:
     
     return summaries
 
-def create_conversation_chain(sheet_summaries: List[str], model_name: str) -> Any:
-    """
-    Create a simple conversation chain that doesn't use vector storage.
-    
-    Args:
-        sheet_summaries: List of text summaries of each sheet
-        model_name: Anthropic model name
-    
-    Returns:
-        ConversationChain
-    """
-    try:
-        # Create Claude LLM
-        llm = ChatAnthropic(
-            model=model_name,
-            temperature=0.1,
-            streaming=True
-        )
-        
-        # Combine summaries into a single context string
-        context = "PA Report Data Summary:\n\n" + "\n".join(sheet_summaries)
-        
-        # Truncate if too long
-        if len(context) > 25000:
-            context = context[:25000] + "...(truncated)"
-        
-        # Create a system prompt with the context
-        system_prompt = f"""You are an AI assistant that helps users analyze and understand Great Gray Analytics PA Report data.
-        Use the following information about the Excel file to answer questions:
-        
-        {context}
-        
-        When discussing financial metrics:
-        - Always specify the currency when mentioning monetary values
-        - Be precise about performance percentages
-        - Clarify time periods for any metrics
-        - Format large numbers with appropriate separators (e.g., $1,234,567.89)
-        
-        If you're not sure about specific details, be honest about your limitations."""
-        
-        # Create memory
-        memory = ConversationBufferMemory(
-            memory_key="chat_history",
-            return_messages=True
-        )
-        
-        # Create prompt template
-        prompt = ChatPromptTemplate.from_messages([
-            ("system", system_prompt),
-            MessagesPlaceholder(variable_name="chat_history"),
-            ("human", "{input}")
-        ])
-        
-        # Create conversation chain
-        conversation = ConversationChain(
-            llm=llm,
-            memory=memory,
-            prompt=prompt,
-            verbose=True
-        )
-        
-        # Create a wrapper to make it look like the retrieval chain interface
-        class SimpleConversationWrapper:
-            def __init__(self, conversation_chain):
-                self.conversation = conversation_chain
-                
-            def __call__(self, inputs):
-                question = inputs.get("question", "")
-                response = self.conversation.predict(input=question)
-                return {
-                    "answer": response,
-                    "source_documents": []  # No sources in simple mode
-                }
-        
-        return SimpleConversationWrapper(conversation)
-        
-    except Exception as e:
-        st.error(f"Error creating conversation chain: {str(e)}")
-        import traceback
-        st.error(traceback.format_exc())
-        return None
-
 def process_file(uploaded_file, model_name):
     """Process the uploaded file."""
-    # Reset file processed flag at the beginning
+    # Reset file processed flag
     st.session_state.file_processed = False
     
     with st.status("Processing PA Report file...", expanded=True) as status:
@@ -230,26 +103,36 @@ def process_file(uploaded_file, model_name):
             status.update(label="Creating text summaries of the data...", state="running")
             sheet_summaries = generate_sheet_summaries(sheet_data)
             
-            # Create conversation chain
-            status.update(label="Setting up Claude model...", state="running")
-            conversation_chain = create_conversation_chain(sheet_summaries, model_name)
+            # Combine summaries
+            combined_summary = "\n\n".join(sheet_summaries)
             
-            if conversation_chain is None:
-                status.update(label="Failed to create conversation chain.", state="error")
-                return
+            # Truncate if too long (Claude has a context limit)
+            if len(combined_summary) > 25000:
+                combined_summary = combined_summary[:25000] + "...(truncated)"
             
             # Save to session state
-            st.session_state.conversation_chain = conversation_chain
             st.session_state.sheet_data = sheet_data
+            st.session_state.sheet_summary = combined_summary
             
-            # Set flag to indicate file is processed
-            st.session_state.file_processed = True
-            
-            # Complete processing
-            status.update(label="Processing complete! You can now chat with your PA Report.", state="complete")
-            
-            # Force a rerun to refresh the UI and show the chat interface
-            st.experimental_rerun()
+            # Initialize Anthropic client
+            try:
+                client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
+                st.session_state.client = client
+                
+                # Set flag to indicate file is processed
+                st.session_state.file_processed = True
+                st.session_state.model = model_name
+                
+                # Complete processing
+                status.update(label="Processing complete! You can now chat with your PA Report.", state="complete")
+                
+                # Force a rerun to refresh the UI
+                st.experimental_rerun()
+                
+            except Exception as e:
+                status.update(label=f"Error initializing Anthropic client: {str(e)}", state="error")
+                import traceback
+                st.error(traceback.format_exc())
             
         except Exception as e:
             status.update(label=f"Error processing file: {str(e)}", state="error")
@@ -265,10 +148,31 @@ def process_file(uploaded_file, model_name):
 
 def display_chat_interface():
     """Display the chat interface."""
+    # Initialize chat context in session state if not already there
+    if "messages" not in st.session_state:
+        st.session_state.messages = []
+        
+        # Add initial system message with context
+        system_message = f"""You are an AI assistant that helps users analyze and understand Great Gray Analytics PA Report data.
+        Use the following information about the Excel file to answer questions:
+        
+        {st.session_state.sheet_summary}
+        
+        When discussing financial metrics:
+        - Always specify the currency when mentioning monetary values
+        - Be precise about performance percentages
+        - Clarify time periods for any metrics
+        - Format large numbers with appropriate separators (e.g., $1,234,567.89)
+        
+        If you're not sure about specific details, be honest about your limitations."""
+        
+        st.session_state.system_message = system_message
+    
     # Display chat messages
     for message in st.session_state.messages:
-        with st.chat_message(message["role"]):
-            st.markdown(message["content"])
+        if message["role"] != "system":  # Don't show system messages to the user
+            with st.chat_message(message["role"]):
+                st.markdown(message["content"])
     
     # Chat input
     if prompt := st.chat_input("Ask a question about your PA Report"):
@@ -284,33 +188,41 @@ def display_chat_interface():
             message_placeholder = st.empty()
             
             try:
-                # Generate response
-                if "conversation_chain" in st.session_state:
-                    with st.spinner("Thinking..."):
-                        # Make API call
-                        response = st.session_state.conversation_chain({"question": prompt})
-                        
-                        # Display response
-                        message_placeholder.markdown(response["answer"])
-                        
-                        # Add assistant response to chat history
-                        st.session_state.messages.append({"role": "assistant", "content": response["answer"]})
-                else:
-                    error_message = "Sorry, the chatbot is not properly initialized. Please reload the page and try again."
-                    message_placeholder.markdown(error_message)
-                    st.session_state.messages.append({"role": "assistant", "content": error_message})
-            
+                # Prepare messages for API call
+                messages = [{"role": "system", "content": st.session_state.system_message}]
+                
+                # Add conversation history (excluding system message)
+                for msg in st.session_state.messages:
+                    if msg["role"] != "system":
+                        messages.append({"role": msg["role"], "content": msg["content"]})
+                
+                # Make API call to Claude
+                with st.spinner("Thinking..."):
+                    response = st.session_state.client.messages.create(
+                        model=st.session_state.model,
+                        messages=messages,
+                        max_tokens=1000
+                    )
+                    
+                    # Display response
+                    assistant_response = response.content[0].text
+                    message_placeholder.markdown(assistant_response)
+                    
+                    # Add assistant response to chat history
+                    st.session_state.messages.append({"role": "assistant", "content": assistant_response})
+                    
             except Exception as e:
                 error_message = f"Error generating response: {str(e)}"
                 message_placeholder.markdown(error_message)
-                st.session_state.messages.append({"role": "assistant", "content": error_message})
+                import traceback
+                st.error(traceback.format_exc())
 
 def display_welcome_screen():
     """Display the welcome screen."""
     st.markdown("""
-    # Great Gray Analytics PA Report Chatbot (Simple Version)
+    # Great Gray Analytics PA Report Chatbot
     
-    This simplified version of the chatbot allows you to chat with your PA Report data without using vector databases or complex embedding models. This makes it more compatible with different environments and easier to deploy.
+    This application allows you to chat with your PA Report data using natural language.
     
     ## Getting Started
     
@@ -340,7 +252,7 @@ def main():
         st.session_state.file_processed = False
     
     # Main title
-    st.title("Great Gray Analytics PA Report Chatbot (Simple Version)")
+    st.title("Great Gray Analytics PA Report Chatbot")
     
     # Sidebar configuration
     with st.sidebar:
@@ -354,11 +266,18 @@ def main():
         else:
             st.success("Anthropic API key loaded from secrets!")
             
-        model_name = st.selectbox("Claude Model", [
-            "claude-3-sonnet-20240229",
-            "claude-3-opus-20240229",
-            "claude-3-haiku-20240307"
-        ], index=0)
+        model_options = {
+            "Claude 3 Opus": "claude-3-opus-20240229",
+            "Claude 3 Sonnet": "claude-3-sonnet-20240229",
+            "Claude 3 Haiku": "claude-3-haiku-20240307"
+        }
+        
+        model_selection = st.selectbox(
+            "Claude Model",
+            options=list(model_options.keys()),
+            index=1  # Default to Sonnet
+        )
+        model_name = model_options[model_selection]
         
         # File upload
         file_section = st.container()
