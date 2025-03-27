@@ -114,6 +114,25 @@ def process_file(uploaded_file, model_name):
             st.session_state.sheet_data = sheet_data
             st.session_state.sheet_summary = combined_summary
             
+            # Reset messages and create system message
+            st.session_state.messages = []
+            
+            # Create system message with context
+            system_message = f"""You are an AI assistant that helps users analyze and understand Great Gray Analytics PA Report data.
+            Use the following information about the Excel file to answer questions:
+            
+            {combined_summary}
+            
+            When discussing financial metrics:
+            - Always specify the currency when mentioning monetary values
+            - Be precise about performance percentages
+            - Clarify time periods for any metrics
+            - Format large numbers with appropriate separators (e.g., $1,234,567.89)
+            
+            If you're not sure about specific details, be honest about your limitations."""
+            
+            st.session_state.system_message = system_message
+            
             # Initialize Anthropic client
             try:
                 client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
@@ -151,12 +170,14 @@ def display_chat_interface():
     # Initialize chat context in session state if not already there
     if "messages" not in st.session_state:
         st.session_state.messages = []
-        
-        # Add initial system message with context
+    
+    # Ensure system message is initialized
+    if "system_message" not in st.session_state:
+        # Create system message with context
         system_message = f"""You are an AI assistant that helps users analyze and understand Great Gray Analytics PA Report data.
         Use the following information about the Excel file to answer questions:
         
-        {st.session_state.sheet_summary}
+        {st.session_state.sheet_summary if "sheet_summary" in st.session_state else "No data loaded yet."}
         
         When discussing financial metrics:
         - Always specify the currency when mentioning monetary values
@@ -244,12 +265,19 @@ def main():
     # Set page title and configuration
     st.set_page_config(page_title=APP_TITLE, page_icon="📊", layout="wide")
     
-    # Initialize session state
+    # Initialize session state variables
     if "messages" not in st.session_state:
         st.session_state.messages = []
     
     if "file_processed" not in st.session_state:
         st.session_state.file_processed = False
+    
+    if "sheet_summary" not in st.session_state:
+        st.session_state.sheet_summary = "No data loaded yet."
+    
+    if "system_message" not in st.session_state:
+        st.session_state.system_message = """You are an AI assistant that helps users analyze and understand Great Gray Analytics PA Report data.
+        No data has been loaded yet, so you can only answer general questions."""
     
     # Main title
     st.title("Great Gray Analytics PA Report Chatbot")
