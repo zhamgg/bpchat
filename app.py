@@ -8,7 +8,7 @@ import logging
 import gc
 from typing import Dict, List, Any, Optional
 from langchain.document_loaders import DataFrameLoader
-from langchain.vectorstores import FAISS
+from langchain.vectorstores import Chroma
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.chat_models.anthropic import ChatAnthropic
 from langchain.embeddings import HuggingFaceEmbeddings
@@ -28,6 +28,16 @@ CACHE_DIR = ".streamlit/cache"
 
 # Create cache directory if it doesn't exist
 os.makedirs(CACHE_DIR, exist_ok=True)
+
+# Check if API key is in secrets
+api_key_from_secrets = False
+try:
+    if "api_keys" in st.secrets:
+        api_key = st.secrets["api_keys"]["anthropic"]
+        os.environ["ANTHROPIC_API_KEY"] = api_key
+        api_key_from_secrets = True
+except Exception as e:
+    pass  # Will handle via UI input
 
 # Prompt template for PA Report specific context
 PA_REPORT_PROMPT_TEMPLATE = """
@@ -203,7 +213,7 @@ def process_dataframe_to_documents(df: pd.DataFrame, sheet_name: str) -> List[Do
 
 def create_vectorstore(documents: List[Document], chunk_size: int, chunk_overlap: int) -> Any:
     """
-    Create a vector store from documents.
+    Create a vector store from documents using ChromaDB.
     
     Args:
         documents: List of Document objects
@@ -211,7 +221,7 @@ def create_vectorstore(documents: List[Document], chunk_size: int, chunk_overlap
         chunk_overlap: Overlap between chunks
         
     Returns:
-        FAISS vector store
+        Chroma vector store
     """
     try:
         # Create text splitter
@@ -226,8 +236,13 @@ def create_vectorstore(documents: List[Document], chunk_size: int, chunk_overlap
         # Use HuggingFace embeddings
         embedding_function = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
         
-        # Create vector store
-        vectorstore = FAISS.from_documents(split_docs, embedding_function)
+        # Create in-memory Chroma vector store
+        vectorstore = Chroma.from_documents(
+            documents=split_docs, 
+            embedding=embedding_function,
+            collection_name="pa_report",
+            persist_directory=None  # In-memory only
+        )
         
         return vectorstore
         
@@ -386,8 +401,12 @@ def main():
         st.title("Configuration")
         
         # Claude configuration
-        api_key = st.secrets["api_keys"]["anthropic"]
-        os.environ["ANTHROPIC_API_KEY"] = api_key
+        if not api_key_from_secrets:
+            api_key = st.text_input("Anthropic API Key", type="password")
+            if api_key:
+                os.environ["ANTHROPIC_API_KEY"] = api_key
+        else:
+            st.success("Anthropic API key loaded from secrets!")
             
         model_name = st.selectbox("Claude Model", [
             "claude-3-sonnet-20240229",
@@ -430,7 +449,7 @@ def main():
                 process_button = st.button("Process File", use_container_width=True)
                 
                 if process_button:
-                    if not api_key:
+                    if not api_key_from_secrets and "ANTHROPIC_API_KEY" not in os.environ:
                         st.error("Please enter your Anthropic API key to proceed.")
                     else:
                         process_file(uploaded_file, model_name, chunk_size, chunk_overlap, max_sheets, max_rows)
@@ -443,7 +462,7 @@ def main():
     
     # Footer
     st.markdown("---")
-    st.markdown("© 2025 Great Gray Analytics | Powered by Claude")
+    st.markdown("© 2025 Great Gray Analytics")
 
 def process_file(uploaded_file, model_name, chunk_size, chunk_overlap, max_sheets, max_rows):
     """Process the uploaded file."""
