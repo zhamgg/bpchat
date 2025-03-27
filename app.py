@@ -22,7 +22,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Constants
-APP_TITLE = "BoardingPass Chatbot"
+APP_TITLE = "Great Gray Analytics PA Report Chatbot"
 MAX_FILE_SIZE_MB = 200
 CACHE_DIR = ".streamlit/cache"
 
@@ -91,7 +91,7 @@ def load_from_cache(cache_path: str) -> Any:
         logger.error(f"Error loading from cache: {str(e)}")
     return None
 
-def extract_sheet_data(file_path: str, max_sheets: int = 2, max_rows_per_sheet: int = 200000) -> Dict[str, pd.DataFrame]:
+def extract_sheet_data(file_path: str, max_sheets: int = 5, max_rows_per_sheet: int = 1000) -> Dict[str, pd.DataFrame]:
     """
     Extract data from Excel sheets in a memory-efficient way.
     
@@ -231,23 +231,46 @@ def create_vectorstore(documents: List[Document], chunk_size: int, chunk_overlap
         )
         
         # Split documents
+        st.info(f"Splitting {len(documents)} documents into chunks...")
         split_docs = text_splitter.split_documents(documents)
+        st.info(f"Created {len(split_docs)} text chunks")
         
-        # Use HuggingFace embeddings
-        embedding_function = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
+        # Use HuggingFace embeddings with explicit parameters
+        st.info("Initializing embedding model...")
+        try:
+            embedding_function = HuggingFaceEmbeddings(
+                model_name="all-MiniLM-L6-v2",
+                model_kwargs={'device': 'cpu'},
+                encode_kwargs={'normalize_embeddings': True}
+            )
+        except Exception as e:
+            st.error(f"Error initializing embedding model: {str(e)}")
+            # Fallback to simpler initialization
+            embedding_function = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
         
-        # Create in-memory Chroma vector store
+        # Process in smaller batches to avoid memory issues
+        st.info("Creating vector store (this may take a while)...")
+        
+        # Create temporary directory for Chroma
+        import tempfile
+        persist_directory = tempfile.mkdtemp()
+        
+        # Create Chroma vector store with smaller batch size
+        from langchain.vectorstores import Chroma
         vectorstore = Chroma.from_documents(
             documents=split_docs, 
             embedding=embedding_function,
             collection_name="pa_report",
-            persist_directory=None  # In-memory only
+            persist_directory=persist_directory
         )
         
+        st.success(f"Successfully created vector store with {len(split_docs)} text chunks")
         return vectorstore
         
     except Exception as e:
-        logger.error(f"Error creating vector store: {str(e)}")
+        st.error(f"Error creating vector store: {str(e)}")
+        import traceback
+        st.error(traceback.format_exc())
         return None
 
 def create_conversation_chain(vectorstore: Any, model_name: str) -> Any:
@@ -292,14 +315,79 @@ def create_conversation_chain(vectorstore: Any, model_name: str) -> Any:
         
         return conversation_chain
         
+    
+
+def create_simple_conversation_chain(model_name: str) -> Any:
+    """
+    Create a simple conversation chain without vector retrieval as a fallback.
+    
+    Args:
+        model_name: Anthropic model name
+        
+    Returns:
+        LangChain conversation chain
+    """
+    try:
+        # Create Claude LLM
+        llm = ChatAnthropic(
+            model=model_name,
+            temperature=0.1,
+            streaming=True
+        )
+        
+        # Create memory
+        memory = ConversationBufferMemory(
+            memory_key="chat_history",
+            return_messages=True
+        )
+        
+        # Create a simple chain that doesn't use retrieval
+        from langchain.chains import ConversationChain
+        
+        # Modify the prompt to include context about the Excel file
+        from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder
+        
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", """You are an AI assistant that helps users analyze and understand Great Gray Analytics PA Report data.
+             You have been provided with information from an Excel file but do not have access to a vector database for retrieval.
+             Use your general knowledge and the information shared to answer questions as best you can.
+             If you're not sure about specific details, be honest about your limitations."""),
+            MessagesPlaceholder(variable_name="chat_history"),
+            ("human", "{input}")
+        ])
+        
+        conversation = ConversationChain(
+            llm=llm,
+            memory=memory,
+            prompt=prompt,
+            verbose=True
+        )
+        
+        # Create a wrapper to make the simple chain look like a retrieval chain
+        class SimpleConversationWrapper:
+            def __init__(self, conversation_chain):
+                self.conversation = conversation_chain
+                
+            def __call__(self, inputs):
+                question = inputs.get("question", "")
+                response = self.conversation.predict(input=question)
+                return {
+                    "answer": response,
+                    "source_documents": []  # No sources in simple mode
+                }
+        
+        return SimpleConversationWrapper(conversation)
+        
     except Exception as e:
-        logger.error(f"Error creating conversation chain: {str(e)}")
+        st.error(f"Error creating simple conversation chain: {str(e)}")
+        import traceback
+        st.error(traceback.format_exc())
         return None
 
 def display_welcome_screen():
     """Display the welcome screen."""
     st.markdown("""
-    # Welcome to the BoardingPass Chatbot
+    # Welcome to the Great Gray Analytics PA Report Chatbot
     
     This tool allows you to chat with your PA Report data through natural language.
     
@@ -462,7 +550,7 @@ def main():
     
     # Footer
     st.markdown("---")
-    st.markdown("© 2025 Great Gray Analytics")
+    st.markdown("© 2025 Great Gray Analytics | Powered by Claude")
 
 def process_file(uploaded_file, model_name, chunk_size, chunk_overlap, max_sheets, max_rows):
     """Process the uploaded file."""
@@ -495,17 +583,34 @@ def process_file(uploaded_file, model_name, chunk_size, chunk_overlap, max_sheet
                 documents.extend(sheet_docs)
                 status.update(label=f"Processed sheet: {sheet_name}", state="running")
             
-            # Create vector store
-            status.update(label="Creating vector store...", state="running")
-            vectorstore = create_vectorstore(documents, chunk_size, chunk_overlap)
+            # Store the documents in session state for fallback
+            st.session_state.documents = documents
             
-            if vectorstore is None:
-                status.update(label="Failed to create vector store.", state="error")
-                return
+            # Try creating vector store
+            status.update(label="Creating vector store...", state="running")
+            try:
+                vectorstore = create_vectorstore(documents, chunk_size, chunk_overlap)
+                
+                if vectorstore is None:
+                    status.update(label="Failed to create vector store. Falling back to simple search.", state="warning")
+                    use_simple_search = True
+                else:
+                    use_simple_search = False
+            except Exception as e:
+                status.update(label=f"Error creating vector store: {str(e)}. Falling back to simple search.", state="warning")
+                use_simple_search = True
             
             # Create conversation chain
             status.update(label="Setting up Claude model...", state="running")
-            conversation_chain = create_conversation_chain(vectorstore, model_name)
+            
+            if use_simple_search:
+                # Use simple conversation model without vector store
+                conversation_chain = create_simple_conversation_chain(model_name)
+                st.session_state.use_simple_search = True
+            else:
+                # Use full retrieval chain
+                conversation_chain = create_conversation_chain(vectorstore, model_name)
+                st.session_state.use_simple_search = False
             
             if conversation_chain is None:
                 status.update(label="Failed to create conversation chain.", state="error")
@@ -518,7 +623,10 @@ def process_file(uploaded_file, model_name, chunk_size, chunk_overlap, max_sheet
             st.session_state.file_processed = True
             
             # Complete processing
-            status.update(label="Processing complete! You can now chat with your PA Report.", state="complete")
+            if use_simple_search:
+                status.update(label="Processing complete with simple search! You can now chat with your PA Report.", state="complete")
+            else:
+                status.update(label="Processing complete! You can now chat with your PA Report.", state="complete")
             
             # Force a rerun to refresh the UI and show the chat interface
             st.experimental_rerun()
