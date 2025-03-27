@@ -22,7 +22,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Constants
-APP_TITLE = "Great Gray Analytics PA Report Chatbot"
+APP_TITLE = "Chat with Boardingpass"
 MAX_FILE_SIZE_MB = 200
 CACHE_DIR = ".streamlit/cache"
 
@@ -91,7 +91,7 @@ def load_from_cache(cache_path: str) -> Any:
         logger.error(f"Error loading from cache: {str(e)}")
     return None
 
-def extract_sheet_data(file_path: str, max_sheets: int = 5, max_rows_per_sheet: int = 1000) -> Dict[str, pd.DataFrame]:
+def extract_sheet_data(file_path: str, max_sheets: int = 1, max_rows_per_sheet: int = 200000) -> Dict[str, pd.DataFrame]:
     """
     Extract data from Excel sheets in a memory-efficient way.
     
@@ -299,7 +299,7 @@ def create_conversation_chain(vectorstore: Any, model_name: str) -> Any:
 def display_welcome_screen():
     """Display the welcome screen."""
     st.markdown("""
-    # Welcome to the Great Gray Analytics PA Report Chatbot
+    # Welcome to the Boardingpass Chatbot
     
     This tool allows you to chat with your PA Report data through natural language.
     
@@ -394,7 +394,7 @@ def main():
         st.session_state.file_processed = False
     
     # Main title
-    st.title("Great Gray Analytics PA Report Chatbot")
+    st.title("Boardingpass Chatbot")
     
     # Sidebar configuration
     with st.sidebar:
