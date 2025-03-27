@@ -7,8 +7,8 @@ import anthropic
 # Constants
 APP_TITLE = "Great Gray Analytics PA Report Chatbot"
 MAX_FILE_SIZE_MB = 200
-MAX_SHEETS = 5
-MAX_ROWS_PER_SHEET = 1000
+MAX_SHEETS = 1
+MAX_ROWS_PER_SHEET = 200000
 
 # Check if API key is in secrets
 api_key_from_secrets = False
@@ -20,7 +20,7 @@ try:
 except Exception as e:
     pass  # Will handle via UI input
 
-def extract_sheet_data(file_path, max_sheets=5, max_rows_per_sheet=1000):
+def extract_sheet_data(file_path, max_sheets=1, max_rows_per_sheet=200000):
     """Extract data from Excel sheets."""
     sheet_data = {}
     
